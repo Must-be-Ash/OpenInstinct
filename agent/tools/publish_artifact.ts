@@ -1,5 +1,5 @@
 import { defineTool } from "eve/tools";
-import { scopeFromPrincipal } from "@/lib/access-scope";
+import { scopeFromPrincipal } from "@/agent/lib/principal-scope";
 import {
   publishArtifact,
   publishArtifactInputSchema,
