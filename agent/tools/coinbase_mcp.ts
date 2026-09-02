@@ -1,6 +1,6 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineDynamic, defineTool, type DynamicToolSet } from "eve/tools";
 import {
-  coinbaseApprovalPolicy,
+  coinbaseApprovalResponderAllowed,
   coinbasePrincipalAllowed,
   requireCoinbaseAccess,
 } from "../lib/coinbase-access";
@@ -71,7 +71,7 @@ async function availableTools() {
 
 export default defineDynamic({
   events: {
-    "session.started": async (_event, ctx) => {
+    "session.started": async (_event, ctx): Promise<DynamicToolSet | null> => {
       if (
         !coinbaseCredentialsConfigured() ||
         !coinbasePrincipalAllowed(ctx.session)
@@ -90,40 +90,82 @@ export default defineDynamic({
         return null;
       }
       return Object.fromEntries(
-        definitions.map((definition) => {
-          const requiresApproval = coinbaseToolRequiresApproval(
-            definition.name
-          );
-          return [
-            definition.name,
-            defineTool({
-              description: `${definition.description ?? definition.name} ${requiresApproval ? "This changes Coinbase state or moves funds. The durable approval control authorizes this exact input; do not ask for another preliminary confirmation." : "This is a read-only Coinbase for Agents operation."}`,
-              inputSchema: parseEveInputSchema(definition.inputSchema),
-              approval:
-                coinbaseApprovalPolicy<Record<string, unknown>>(
-                  requiresApproval
-                ),
-              async execute(input, toolCtx) {
-                requireCoinbaseAccess(toolCtx);
-                const toolInput = enforceCoinbaseToolInput(
-                  definition.name,
-                  input
-                );
-                const result = await callCoinbaseMcpTool(
-                  definition.name,
-                  toolInput,
-                  toolCtx.abortSignal
-                );
-                return requiresApproval
-                  ? {
+        definitions.map(
+          (definition): readonly [string, DynamicToolSet[string]] => {
+            const requiresApproval = coinbaseToolRequiresApproval(
+              definition.name
+            );
+            const description = `${definition.description ?? definition.name} ${requiresApproval ? "This changes Coinbase state or moves funds. The durable approval control authorizes this exact input; do not ask for another preliminary confirmation." : "This is a read-only Coinbase for Agents operation."}`;
+            const inputSchema = parseEveInputSchema(definition.inputSchema);
+            if (requiresApproval) {
+              return [
+                definition.name,
+                defineTool({
+                  description,
+                  inputSchema,
+                  approval: {
+                    request(approvalContext) {
+                      return coinbasePrincipalAllowed(approvalContext.session)
+                        ? "user-approval"
+                        : {
+                            type: "denied",
+                            reason: "This user is not authorized for Coinbase.",
+                          };
+                    },
+                    response({ responder, session }) {
+                      return coinbaseApprovalResponderAllowed(
+                        responder,
+                        session.initiator
+                      )
+                        ? { status: "allowed" }
+                        : {
+                            status: "rejected",
+                            reason:
+                              "Only the allowlisted user who requested this Coinbase action may approve it.",
+                          };
+                    },
+                  },
+                  async execute(input, toolCtx) {
+                    requireCoinbaseAccess(toolCtx);
+                    const toolInput = enforceCoinbaseToolInput(
+                      definition.name,
+                      input
+                    );
+                    const result = await callCoinbaseMcpTool(
+                      definition.name,
+                      toolInput,
+                      toolCtx.abortSignal
+                    );
+                    return {
                       note: "This result is authoritative. Do not retry this mutation automatically if its outcome is ambiguous.",
                       result,
-                    }
-                  : result;
-              },
-            }),
-          ];
-        })
+                    };
+                  },
+                }),
+              ] as const;
+            }
+            return [
+              definition.name,
+              defineTool({
+                description,
+                inputSchema,
+                async execute(input, toolCtx) {
+                  requireCoinbaseAccess(toolCtx);
+                  const toolInput = enforceCoinbaseToolInput(
+                    definition.name,
+                    input
+                  );
+                  const result = await callCoinbaseMcpTool(
+                    definition.name,
+                    toolInput,
+                    toolCtx.abortSignal
+                  );
+                  return result;
+                },
+              }),
+            ] as const;
+          }
+        )
       );
     },
   },

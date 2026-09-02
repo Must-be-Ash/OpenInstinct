@@ -88,9 +88,13 @@ describe("root and worker capability boundaries", () => {
     expect(readFileSync(`${rootTools}/agentcash_fetch.ts`, "utf8")).toContain(
       "approval: agentcashPaymentApprovalPolicy"
     );
-    expect(readFileSync(`${rootTools}/coinbase_mcp.ts`, "utf8")).toContain(
-      '"session.started"'
+    const dynamicCoinbaseTools = readFileSync(
+      `${rootTools}/coinbase_mcp.ts`,
+      "utf8"
     );
+    expect(dynamicCoinbaseTools).toContain('"session.started"');
+    expect(dynamicCoinbaseTools).not.toContain("coinbaseApprovalPolicy(");
+    expect(dynamicCoinbaseTools).toContain("approval: {");
     expect(
       readFileSync(`${rootTools}/agentcash_fetch_free.ts`, "utf8")
     ).not.toContain("approval:");
