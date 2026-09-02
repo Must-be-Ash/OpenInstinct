@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { transformDynamicToolExecute } from "../node_modules/eve/dist/src/internal/workflow-bundle/dynamic-tool-transform.js";
 
 const rootTools = "agent/tools";
 const rootMemory = "agent/memory/profile.ts";
@@ -93,8 +94,6 @@ describe("root and worker capability boundaries", () => {
       "utf8"
     );
     expect(dynamicCoinbaseTools).toContain('"session.started"');
-    expect(dynamicCoinbaseTools).not.toContain("coinbaseApprovalPolicy(");
-    expect(dynamicCoinbaseTools).toContain("approval: {");
     expect(
       readFileSync(`${rootTools}/agentcash_fetch_free.ts`, "utf8")
     ).not.toContain("approval:");
@@ -119,6 +118,21 @@ describe("root and worker capability boundaries", () => {
     );
     expect(rootInstructions).toContain(
       "try `web_fetch` before browser automation"
+    );
+  });
+
+  it("compiles Coinbase mutation approvals into durable callbacks", async () => {
+    const source = readFileSync(`${rootTools}/coinbase_mcp.ts`, "utf8");
+    const transformed = await transformDynamicToolExecute(
+      `${rootTools}/coinbase_mcp.ts`,
+      source
+    );
+
+    expect(transformed?.code).toMatch(
+      /request:\s*__eveStampDynamicCallback\([^\n]*__eve_dynamic_approval_request/u
+    );
+    expect(transformed?.code).toMatch(
+      /response:\s*__eveStampDynamicCallback\([^\n]*__eve_dynamic_approval_response/u
     );
   });
 
