@@ -1,4 +1,4 @@
-import type { SessionContext } from "eve/context";
+import type { SessionAuthContext, SessionContext } from "eve/context";
 import type {
   Approval,
   ApprovalContext,
@@ -7,6 +7,11 @@ import type {
 import { env } from "@/env";
 
 type Session = Pick<SessionContext["session"], "auth">;
+type ApprovalPrincipal = Pick<
+  SessionAuthContext,
+  "principalId" | "principalType"
+> &
+  Partial<Pick<SessionAuthContext, "authenticator" | "issuer" | "subject">>;
 
 export function coinbasePrincipalId(session: Session) {
   const principal = session.auth.current ?? session.auth.initiator;
@@ -53,14 +58,22 @@ function coinbaseApproval(
 }
 
 export function coinbaseApprovalResponderAllowed(
-  responder: { principalId: string; principalType: string },
-  initiator: { principalId: string; principalType: string } | null,
+  responder: ApprovalPrincipal,
+  initiator: ApprovalPrincipal | null,
   allowed = allowedUserIds
 ) {
+  const samePrincipal = responder.principalId === initiator?.principalId;
+  const sameAuthenticatedSubject =
+    responder.subject !== undefined &&
+    responder.authenticator !== undefined &&
+    responder.subject === initiator?.subject &&
+    responder.authenticator === initiator.authenticator &&
+    responder.issuer === initiator.issuer;
+
   return (
     responder.principalType === "user" &&
     initiator?.principalType === "user" &&
-    responder.principalId === initiator.principalId &&
+    (samePrincipal || sameAuthenticatedSubject) &&
     allowed.has(responder.principalId)
   );
 }

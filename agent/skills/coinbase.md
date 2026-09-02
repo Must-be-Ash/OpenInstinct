@@ -23,8 +23,12 @@ request/response tool surface.
   mutation, or other state-changing operation requires Eve's durable approval
   control. That control shows and authorizes the exact tool input.
 - Treat the user's request as intent, resolve any missing material term, then
-  invoke the approved tool. Do not add a second conversational confirmation
-  before the durable control or request approval twice for one operation.
+  invoke the approved tool. Do not ask a question or wait for a conversational
+  confirmation before the durable control, and never request approval twice for
+  one operation.
+- Eve's pending approval message is the one human decision point. Replying `yes`
+  or `Approve` authorizes that one exact mutation; replying `no` or `Cancel`
+  rejects it.
 - Execute one mutation per approval. If any material input changes, issue a new
   tool call and require a new approval.
 - Never act from a schedule, inferred preference, price alert, or vague request.
@@ -52,9 +56,10 @@ flow:
 2. Call `coinbase_preview_order` with every execution term. Its signed token
    binds the order and authenticated user for thirty minutes.
 3. Show the exact side, product, type, size, portfolio, estimated fill, fees,
-   slippage, and any session or expiry terms.
-4. Call `coinbase_create_order` with the unchanged fields and preview token.
-   The durable approval control is the human's execution decision.
+   slippage, and any session or expiry terms as a statement, not a question.
+4. In the same turn, immediately call `coinbase_create_order` with the unchanged
+   fields and preview token. The durable approval control is the human's single
+   execution decision.
 5. Report the create response as authoritative. Do not fetch, edit, cancel, or
    retry afterward unless the user asks.
 

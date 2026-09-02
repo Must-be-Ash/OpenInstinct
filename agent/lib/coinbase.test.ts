@@ -312,5 +312,64 @@ describe("Coinbase capability policy", () => {
         allowed
       )
     ).toBe(false);
+
+    expect(
+      coinbaseApprovalResponderAllowed(
+        {
+          authenticator: "linq-message",
+          issuer: "linq",
+          principalId: "better-auth:user-1",
+          principalType: "user",
+          subject: "linq-user-1",
+        },
+        {
+          authenticator: "linq-message",
+          issuer: "linq",
+          principalId: "linq:linq-user-1",
+          principalType: "user",
+          subject: "linq-user-1",
+        },
+        new Set(["better-auth:user-1"])
+      )
+    ).toBe(true);
+
+    const initiator = {
+      authenticator: "linq-message",
+      issuer: "linq",
+      principalId: "linq:linq-user-1",
+      principalType: "user" as const,
+      subject: "linq-user-1",
+    };
+    const responder = {
+      authenticator: "linq-message",
+      issuer: "linq",
+      principalId: "better-auth:user-1",
+      principalType: "user" as const,
+      subject: "linq-user-1",
+    };
+    expect(
+      coinbaseApprovalResponderAllowed(
+        { ...responder, subject: "linq-user-2" },
+        initiator,
+        new Set([responder.principalId])
+      )
+    ).toBe(false);
+    expect(
+      coinbaseApprovalResponderAllowed(
+        { ...responder, authenticator: "other" },
+        initiator,
+        new Set([responder.principalId])
+      )
+    ).toBe(false);
+    expect(
+      coinbaseApprovalResponderAllowed(
+        { ...responder, issuer: "other" },
+        initiator,
+        new Set([responder.principalId])
+      )
+    ).toBe(false);
+    expect(
+      coinbaseApprovalResponderAllowed(responder, initiator, new Set())
+    ).toBe(false);
   });
 });

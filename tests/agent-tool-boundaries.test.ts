@@ -104,6 +104,13 @@ describe("root and worker capability boundaries", () => {
     const agentcashSkill = readFileSync("agent/skills/agentcash.md", "utf8");
     expect(agentcashSkill).not.toContain("Ask for explicit approval");
     expect(agentcashSkill).toContain("agentcash_fetch_free");
+    const coinbaseSkill = readFileSync("agent/skills/coinbase.md", "utf8");
+    expect(coinbaseSkill).toMatch(
+      /Do not ask a question or wait for a conversational\s+confirmation/u
+    );
+    expect(coinbaseSkill).toMatch(
+      /Replying `yes`\s+or `Approve` authorizes that one exact mutation/u
+    );
     expect(rootInstructions).toContain(
       "Perform public research, source discovery, comparisons, and current-information lookups directly with `web_search`"
     );
