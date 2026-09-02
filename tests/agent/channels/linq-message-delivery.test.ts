@@ -176,6 +176,11 @@ const handleActionResult = linqChannelCapture.config?.events?.["action.result"];
 if (!handleActionResult) {
   throw new Error("The Linq channel must configure action result delivery.");
 }
+const handleCompletedMessage =
+  linqChannelCapture.config?.events?.["message.completed"];
+if (!handleCompletedMessage) {
+  throw new Error("The Linq channel must configure terminal text delivery.");
+}
 
 type ActionHandlerParameters = Parameters<typeof handleActionResult>;
 
@@ -205,10 +210,42 @@ describe("Linq message delivery", () => {
     scheduleDeliveryCapture.release.mockResolvedValue(true);
   });
 
-  it("does not register automatic assistant text posting", () => {
-    expect(linqChannelCapture.config?.events?.["message.completed"]).toBeTypeOf(
-      "function"
+  it("posts terminal assistant text when the model omits send_message", async () => {
+    const { context, post } = handlerContext();
+
+    await handleCompletedMessage(
+      {
+        finishReason: "stop",
+        message: "I received your request.",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
     );
+
+    expect(post).toHaveBeenCalledExactlyOnceWith({
+      raw: "I received your request.",
+    });
+  });
+
+  it("does not post narration from a tool-calling step", async () => {
+    const { context, post } = handlerContext();
+
+    await handleCompletedMessage(
+      {
+        finishReason: "tool-calls",
+        message: "I will call a tool.",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
+    );
+
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("posts send_message output as raw iMessage text", async () => {

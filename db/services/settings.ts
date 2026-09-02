@@ -3,7 +3,7 @@ import type { AccessScope } from "@/lib/access-scope";
 import { db, settings } from "@/db";
 
 const gatewayModelKey = "gateway_model";
-const defaultGatewayModel = "google/gemini-3.7-flash";
+const defaultGatewayModel = "google/gemini-2.5-flash";
 
 async function readGatewayModel(scope: AccessScope) {
   const rows = await db

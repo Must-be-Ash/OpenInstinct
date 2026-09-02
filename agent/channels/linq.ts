@@ -216,12 +216,15 @@ export default linqChannel({
         await finalizeScheduledReportDelivery(session);
       }
     },
-    async "message.completed"(event, _context, session) {
+    async "message.completed"(event, context, session) {
       if (event.finishReason === "tool-calls") return;
       const report = scheduledReportFromSession(session);
       if (report) {
         await finalizeScheduledReportDelivery(session, "suppressed");
+        return;
       }
+      if (!event.message || !context.thread) return;
+      await context.thread.post({ raw: event.message });
     },
     async "session.completed"(_event, _context, session) {
       const report = scheduledReportFromSession(session);

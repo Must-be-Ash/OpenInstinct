@@ -356,7 +356,7 @@ describe("database services", () => {
 
     await settings.selectGatewayModel(alice, "openai/test");
     expect(await settings.getGatewayModel(alice)).toBe("openai/test");
-    expect(await settings.getGatewayModel(bob)).toBe("google/gemini-3.7-flash");
+    expect(await settings.getGatewayModel(bob)).toBe("google/gemini-2.5-flash");
   }, 15_000);
 });
 
