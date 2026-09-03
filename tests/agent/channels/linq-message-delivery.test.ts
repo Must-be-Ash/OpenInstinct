@@ -181,6 +181,15 @@ const handleCompletedMessage =
 if (!handleCompletedMessage) {
   throw new Error("The Linq channel must configure terminal text delivery.");
 }
+const handleFailedTurn = linqChannelCapture.config?.events?.["turn.failed"];
+if (!handleFailedTurn) {
+  throw new Error("The Linq channel must configure failed turn delivery.");
+}
+const handleInputRequested =
+  linqChannelCapture.config?.events?.["input.requested"];
+if (!handleInputRequested) {
+  throw new Error("The Linq channel must configure input request delivery.");
+}
 
 type ActionHandlerParameters = Parameters<typeof handleActionResult>;
 
@@ -246,6 +255,140 @@ describe("Linq message delivery", () => {
     );
 
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it("tells interactive users when their turn fails", async () => {
+    const { context, post } = handlerContext();
+
+    await handleFailedTurn(
+      {
+        code: "DYNAMIC_TOOL_RESTORE_FAILED",
+        details: {},
+        message: "Dynamic tool callbacks could not be restored.",
+        sequence: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
+    );
+
+    expect(post).toHaveBeenCalledExactlyOnceWith({
+      raw: "I hit an error while handling your request. I couldn't confirm whether any requested action completed, so please check its status before retrying.",
+    });
+  });
+
+  it("renders an approval as actionable plain text", async () => {
+    const { context, post } = handlerContext();
+
+    await handleInputRequested(
+      {
+        requests: [
+          {
+            action: {
+              callId: "coinbase-create-call",
+              input: {
+                apiKey: "should-not-leave-the-server",
+                body: "private request body",
+                metadata: { private_key: "nested-secret" },
+                previewToken: "signed-secret-preview-token",
+                productId: "BTC-USD",
+                quoteSize: "25",
+              },
+              kind: "tool-call",
+              toolName: "coinbase_create_order",
+            },
+            allowFreeform: false,
+            display: "confirmation",
+            kind: "tool-approval",
+            options: [
+              { id: "approve", label: "Approve", style: "primary" },
+              { id: "cancel", label: "Cancel" },
+            ],
+            prompt: "Approve this exact Coinbase order?",
+            requestId: "approval-1",
+          },
+        ],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
+    );
+
+    expect(post).not.toHaveBeenCalled();
+    expect(linqChannelCapture.postMessage).toHaveBeenCalledExactlyOnceWith(
+      "linq:dm:chat-1",
+      {
+        raw: [
+          "Approve this exact Coinbase order?",
+          "Tool: coinbase_create_order",
+          "Input:",
+          '{\n  "apiKey": "[redacted]",\n  "body": "[redacted]",\n  "metadata": {\n    "private_key": "[redacted]"\n  },\n  "previewToken": "[redacted]",\n  "productId": "BTC-USD",\n  "quoteSize": "25"\n}',
+          "Reply with Approve or Cancel.",
+        ].join("\n"),
+      },
+      { idempotencyKey: "input-request:session-1:approval-1" }
+    );
+  });
+
+  it("does not advertise text approval for a protected action batch", async () => {
+    const { context } = handlerContext();
+    const request = {
+      action: {
+        callId: "coinbase-create-call",
+        input: { productId: "BTC-USD", quoteSize: "25" },
+        kind: "tool-call" as const,
+        toolName: "coinbase_create_order",
+      },
+      allowFreeform: false,
+      display: "confirmation" as const,
+      kind: "tool-approval" as const,
+      options: [
+        { id: "approve", label: "Approve", style: "primary" as const },
+        { id: "cancel", label: "Cancel" },
+      ],
+      prompt: "Approve this exact Coinbase order?",
+      requestId: "approval-1",
+    };
+
+    await handleInputRequested(
+      {
+        requests: [
+          request,
+          {
+            ...request,
+            action: { ...request.action, callId: "coinbase-create-call-2" },
+            requestId: "approval-2",
+          },
+        ],
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
+    );
+
+    expect(linqChannelCapture.postMessage).toHaveBeenCalledExactlyOnceWith(
+      "linq:dm:chat-1",
+      {
+        raw: [
+          "Approve this exact Coinbase order?",
+          "Tool: coinbase_create_order",
+          "Input:",
+          '{\n  "productId": "BTC-USD",\n  "quoteSize": "25"\n}',
+          "",
+          "Approve this exact Coinbase order?",
+          "Tool: coinbase_create_order",
+          "Input:",
+          '{\n  "productId": "BTC-USD",\n  "quoteSize": "25"\n}',
+          "",
+          "These actions cannot be approved together by text. Reply with Cancel to reject all of them, then request one action at a time.",
+        ].join("\n"),
+      },
+      { idempotencyKey: "input-request:session-1:approval-1,approval-2" }
+    );
   });
 
   it("posts send_message output as raw iMessage text", async () => {

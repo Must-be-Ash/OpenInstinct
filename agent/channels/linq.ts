@@ -1,9 +1,11 @@
 import { connectLinqCredentials } from "@vercel/connect/eve";
 import { LinqAPIV3 } from "@linqapp/sdk";
 import type { AdapterPostableMessage } from "chat";
+import type { JsonValue } from "eve/connections";
 import {
   defaultLinqAuth,
   linqChannel,
+  type LinqChannelConfig,
   type LinqChannelCredentials,
 } from "eve/channels/linq";
 import { z } from "zod";
@@ -226,6 +228,56 @@ export default linqChannel({
       if (!event.message || !context.thread) return;
       await context.thread.post({ raw: event.message });
     },
+    async "input.requested"(event, context, session) {
+      if (!context.thread || event.requests.length === 0) return;
+      const approvals = event.requests.filter(
+        (request) => request.kind === "tool-approval"
+      );
+      const approvalBatch =
+        approvals.length > 1 && approvals.length === event.requests.length;
+      const approvalMixedWithOtherInput =
+        approvals.length > 0 && approvals.length < event.requests.length;
+      const raw = [
+        ...event.requests.map((request) => {
+          const actionDetails =
+            request.kind === "tool-approval"
+              ? `\nTool: ${request.action.toolName}\nInput:\n${formatApprovalInput(request.action.input)}`
+              : "";
+          const labels = request.options?.map((option) => option.label) ?? [];
+          if (
+            labels.length > 0 &&
+            !approvalBatch &&
+            !approvalMixedWithOtherInput
+          ) {
+            return `${request.prompt}${actionDetails}\nReply with ${labels.join(" or ")}.`;
+          }
+          return request.allowFreeform
+            ? `${request.prompt}${actionDetails}\nReply with your answer.`
+            : `${request.prompt}${actionDetails}`;
+        }),
+        ...(approvalBatch
+          ? [
+              "These actions cannot be approved together by text. Reply with Cancel to reject all of them, then request one action at a time.",
+            ]
+          : []),
+        ...(approvalMixedWithOtherInput
+          ? [
+              "This batch combines an approval with another question. Reply with Cancel to reject the protected action; I will then ask for the remaining input separately.",
+            ]
+          : []),
+      ].join("\n\n");
+      const requestIds = event.requests
+        .map((request) => request.requestId)
+        .toSorted()
+        .join(",");
+      await context.bot.getAdapter("linq").postMessage(
+        context.thread.id,
+        { raw },
+        {
+          idempotencyKey: `input-request:${session.session.id}:${requestIds}`,
+        }
+      );
+    },
     async "session.completed"(_event, _context, session) {
       const report = scheduledReportFromSession(session);
       if (report) {
@@ -238,8 +290,12 @@ export default linqChannel({
         "Scheduled result reporting was cancelled."
       );
     },
-    async "turn.failed"(event, _context, session) {
+    async "turn.failed"(event, context, session) {
       await releaseScheduledReportDelivery(session, event.message);
+      if (scheduledReportFromSession(session) || !context.thread) return;
+      await context.thread.post({
+        raw: "I hit an error while handling your request. I couldn't confirm whether any requested action completed, so please check its status before retrying.",
+      });
     },
   },
   async onMessage(context, message) {
@@ -283,6 +339,45 @@ export default linqChannel({
     };
   },
 });
+
+const sensitiveApprovalInputKey =
+  /(?:api.?key|authorization|body|cookie|credential|mnemonic|password|preview.?token|private.?key|secret|signature|signed.?payload|token)$/iu;
+const approvalInputMaximumCharacters = 2_800;
+
+type LinqInputRequest = Parameters<
+  NonNullable<NonNullable<LinqChannelConfig["events"]>["input.requested"]>
+>[0]["requests"][number];
+type ApprovalInput = LinqInputRequest["action"]["input"];
+
+function formatApprovalInput(input: ApprovalInput) {
+  const serialized = JSON.stringify(redactApprovalInput(input), null, 2);
+  return serialized.length <= approvalInputMaximumCharacters
+    ? serialized
+    : `${serialized.slice(0, approvalInputMaximumCharacters)}\n… [input truncated]`;
+}
+
+function redactApprovalInput(input: ApprovalInput): ApprovalInput {
+  const redacted: Record<string, JsonValue> = {};
+  for (const key of Object.keys(input)) {
+    const value = input[key];
+    if (value === undefined) continue;
+    redacted[key] = sensitiveApprovalInputKey.test(key)
+      ? "[redacted]"
+      : redactApprovalInputValue(value);
+  }
+  return redacted;
+}
+
+function redactApprovalInputValue(value: JsonValue): JsonValue {
+  if (isJsonArray(value)) return value.map(redactApprovalInputValue);
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JsonValue is already validated; this branch distinguishes its primitive and object variants.
+  if (value === null || typeof value !== "object") return value;
+  return redactApprovalInput(value);
+}
+
+function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+  return Array.isArray(value);
+}
 
 async function findVerifiedAuthUserIdByPhoneNumber(phoneNumber: string) {
   const auth = await getAuth();
