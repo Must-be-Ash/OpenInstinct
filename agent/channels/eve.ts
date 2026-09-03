@@ -3,6 +3,7 @@ import {
   ForbiddenError,
   localDev,
   UnauthenticatedError,
+  vercelOidc,
 } from "eve/channels/auth";
 import { z } from "zod";
 import { isSessionOwned } from "@/db/services/sessions";
@@ -16,6 +17,7 @@ import {
 } from "@/agent/lib/schedules/report-lifecycle";
 
 const authenticateLocalDev = localDev();
+const authenticateVercelOperator = vercelOidc();
 
 export default eveChannel({
   auth: [
@@ -39,6 +41,12 @@ export default eveChannel({
         principalId: scope.userId,
         principalType: "user",
       };
+    },
+    async (request) => {
+      if (!isOperatorSessionControlPath(new URL(request.url).pathname)) {
+        return null;
+      }
+      return authenticateVercelOperator(request);
     },
     async (request) => {
       const local = await authenticateLocalDev(request);
@@ -109,6 +117,12 @@ function sessionIdFromPath(pathname: string) {
   } catch {
     return undefined;
   }
+}
+
+export function isOperatorSessionControlPath(pathname: string) {
+  return /^\/eve\/v1\/session\/[^/]+\/(?:cancel|clear|compact|reset)$/u.test(
+    pathname
+  );
 }
 
 async function requestIdentityFromRequest(request: Request) {

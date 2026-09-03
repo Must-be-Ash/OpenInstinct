@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as AuthSession from "@/auth/session";
 import * as SessionService from "@/db/services/sessions";
 import { authSessionFor } from "@/tests/helpers/auth-session";
-import eveChannel, { waitForSessionOwnership } from "@/agent/channels/eve";
+import eveChannel, {
+  isOperatorSessionControlPath,
+  waitForSessionOwnership,
+} from "@/agent/channels/eve";
 
 const getAuthSessionMock = vi.spyOn(AuthSession, "getAuthSession");
 const isSessionOwnedMock = vi.spyOn(SessionService, "isSessionOwned");
@@ -26,6 +29,18 @@ afterEach(() => {
 });
 
 describe("Eve channel authentication", () => {
+  it("limits Vercel operator authentication to session controls", () => {
+    expect(
+      isOperatorSessionControlPath("/eve/v1/session/session-1/clear")
+    ).toBe(true);
+    expect(
+      isOperatorSessionControlPath("/eve/v1/session/session-1/stream")
+    ).toBe(false);
+    expect(isOperatorSessionControlPath("/eve/v1/session/session-1")).toBe(
+      false
+    );
+  });
+
   it("allows a session ownership hook to settle after workflow startup", async () => {
     isSessionOwnedMock
       .mockResolvedValueOnce(false)

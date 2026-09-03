@@ -87,7 +87,7 @@ describe("root and worker capability boundaries", () => {
     expect(embeddedAgentcash).toContain("__openinstinctPublicAddress");
     expect(embeddedAgentcash).toContain('redirect: "error"');
     expect(readFileSync(`${rootTools}/agentcash_fetch.ts`, "utf8")).toContain(
-      "approval: agentcashPaymentApprovalPolicy"
+      "approval: agentcashPaymentApprovalPolicy()"
     );
     const dynamicCoinbaseTools = readFileSync(
       `${rootTools}/coinbase_mcp.ts`,
@@ -106,6 +106,9 @@ describe("root and worker capability boundaries", () => {
     const agentcashSkill = readFileSync("agent/skills/agentcash.md", "utf8");
     expect(agentcashSkill).not.toContain("Ask for explicit approval");
     expect(agentcashSkill).toContain("agentcash_fetch_free");
+    expect(agentcashSkill).toContain(
+      "Never use `ask_question` or a prose question for payment approval"
+    );
     const coinbaseSkill = readFileSync("agent/skills/coinbase.md", "utf8");
     expect(coinbaseSkill).toMatch(
       /Do not ask a question or wait for a conversational\s+confirmation/u
@@ -118,6 +121,9 @@ describe("root and worker capability boundaries", () => {
     );
     expect(rootInstructions).toContain(
       "try `web_fetch` before browser automation"
+    );
+    expect(rootInstructions).toContain(
+      "Never use `ask_question` or a prose question to approve a paid tool"
     );
   });
 
@@ -133,6 +139,21 @@ describe("root and worker capability boundaries", () => {
     );
     expect(transformed?.code).toMatch(
       /response:\s*__eveStampDynamicCallback\([^\n]*__eve_dynamic_approval_response/u
+    );
+  });
+
+  it("does not compile the Agentcash approval policy object as a function", async () => {
+    const source = readFileSync(`${rootTools}/agentcash_fetch.ts`, "utf8");
+    const transformed = await transformDynamicToolExecute(
+      `${rootTools}/agentcash_fetch.ts`,
+      source
+    );
+
+    expect(transformed?.code).toContain(
+      "approval: agentcashPaymentApprovalPolicy()"
+    );
+    expect(transformed?.code).not.toMatch(
+      /return agentcashPaymentApprovalPolicy\(\.\.\.__args\)/u
     );
   });
 
