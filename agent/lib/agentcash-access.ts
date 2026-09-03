@@ -81,14 +81,16 @@ export function agentcashApprovalResponderAllowed(
   );
 }
 
-export const agentcashPaymentApprovalPolicy: Approval = {
-  request: agentcashPaymentApproval,
-  response: ({ responder, session }) =>
-    agentcashApprovalResponderAllowed(responder, session.initiator)
-      ? { status: "allowed" }
-      : {
-          status: "rejected",
-          reason:
-            "Only the allowlisted user who requested this Agentcash payment may approve it.",
-        },
-};
+export function agentcashPaymentApprovalPolicy(): Approval {
+  return {
+    request: agentcashPaymentApproval,
+    response: ({ responder, session }) =>
+      agentcashApprovalResponderAllowed(responder, session.initiator)
+        ? { status: "allowed" }
+        : {
+            status: "rejected",
+            reason:
+              "Only the allowlisted user who requested this Agentcash payment may approve it.",
+          },
+  };
+}

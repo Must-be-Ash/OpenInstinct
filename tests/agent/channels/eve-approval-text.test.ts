@@ -42,85 +42,88 @@ describe("Eve text approval fallback", () => {
     });
   });
 
-  it("binds one authenticated text reply to one protected approval", async () => {
-    const responder = {
-      attributes: {},
-      authenticator: "linq-message",
-      issuer: "linq",
-      principalId: "test-user",
-      principalType: "user" as const,
-      subject: "linq-user-1",
-    };
-    const session: HarnessSession = {
-      agent: { dynamicModel: true, system: "", tools: [] },
-      compaction: { recentWindowSize: 10, threshold: 100_000 },
-      continuationToken: "continuation-1",
-      history: [],
-      sessionId: "session-1",
-      state: {
-        "eve.runtime.pendingInputBatches": [
+  it.each(["yes", "approve", "approved", "proceed", "go ahead"])(
+    "binds authenticated %s text to one protected approval",
+    async (approvalText) => {
+      const responder = {
+        attributes: {},
+        authenticator: "linq-message",
+        issuer: "linq",
+        principalId: "test-user",
+        principalType: "user" as const,
+        subject: "linq-user-1",
+      };
+      const session: HarnessSession = {
+        agent: { dynamicModel: true, system: "", tools: [] },
+        compaction: { recentWindowSize: 10, threshold: 100_000 },
+        continuationToken: "continuation-1",
+        history: [],
+        sessionId: "session-1",
+        state: {
+          "eve.runtime.pendingInputBatches": [
+            {
+              event: { sequence: 1, stepIndex: 0, turnId: "turn-1" },
+              requests: [approvalRequest],
+              responseAuthRequiredRequestIds: [approvalRequest.requestId],
+              responseMessages: [],
+            },
+          ],
+        },
+      };
+
+      const result = await coordinateApprovalDelivery({
+        session,
+        stepInput: { message: approvalText, messageAuth: responder },
+        tools: new Map(),
+      });
+
+      expect(result.kind).toBe("continue-coordination");
+      expect(result.feedback).toEqual([]);
+      expect(result.stepInput?.message).toBeUndefined();
+
+      const responsePolicy = vi.fn<() => Promise<{ status: "allowed" }>>(
+        async () => ({ status: "allowed" })
+      );
+      const tools: HarnessToolMap = new Map([
+        [
+          "coinbase_create_order",
           {
-            event: { sequence: 1, stepIndex: 0, turnId: "turn-1" },
-            requests: [approvalRequest],
-            responseAuthRequiredRequestIds: [approvalRequest.requestId],
-            responseMessages: [],
+            approval: {
+              request: () => "user-approval" as const,
+              response: responsePolicy,
+            },
+            description: "Execute one Coinbase order.",
+            inputSchema: z.object({}),
+            name: "coinbase_create_order",
           },
         ],
-      },
-    };
+      ]);
+      const runtimeContext = new ContextContainer();
+      runtimeContext.set(SessionKey, {
+        auth: { current: responder, initiator: responder },
+        sessionId: session.sessionId,
+        turn: { id: "turn-1", sequence: 1 },
+      });
+      const authorized = await contextStorage.run(runtimeContext, () =>
+        coordinateApprovalDelivery({ session: result.session, tools })
+      );
 
-    const result = await coordinateApprovalDelivery({
-      session,
-      stepInput: { message: "yes", messageAuth: responder },
-      tools: new Map(),
-    });
+      expect(authorized.kind).toBe("continue");
+      expect(authorized.stepInput?.inputResponses).toEqual([
+        { optionId: "approve", requestId: approvalRequest.requestId },
+      ]);
+      expect(responsePolicy).toHaveBeenCalledOnce();
 
-    expect(result.kind).toBe("continue-coordination");
-    expect(result.feedback).toEqual([]);
-    expect(result.stepInput?.message).toBeUndefined();
-
-    const responsePolicy = vi.fn<() => Promise<{ status: "allowed" }>>(
-      async () => ({ status: "allowed" })
-    );
-    const tools: HarnessToolMap = new Map([
-      [
-        "coinbase_create_order",
-        {
-          approval: {
-            request: () => "user-approval" as const,
-            response: responsePolicy,
-          },
-          description: "Execute one Coinbase order.",
-          inputSchema: z.object({}),
-          name: "coinbase_create_order",
-        },
-      ],
-    ]);
-    const runtimeContext = new ContextContainer();
-    runtimeContext.set(SessionKey, {
-      auth: { current: responder, initiator: responder },
-      sessionId: session.sessionId,
-      turn: { id: "turn-1", sequence: 1 },
-    });
-    const authorized = await contextStorage.run(runtimeContext, () =>
-      coordinateApprovalDelivery({ session: result.session, tools })
-    );
-
-    expect(authorized.kind).toBe("continue");
-    expect(authorized.stepInput?.inputResponses).toEqual([
-      { optionId: "approve", requestId: approvalRequest.requestId },
-    ]);
-    expect(responsePolicy).toHaveBeenCalledOnce();
-
-    await contextStorage.run(runtimeContext, () =>
-      coordinateApprovalDelivery({
-        session: authorized.session,
-        stepInput: { message: "yes", messageAuth: responder },
-        tools,
-      })
-    );
-    expect(responsePolicy).toHaveBeenCalledOnce();
-  });
+      await contextStorage.run(runtimeContext, () =>
+        coordinateApprovalDelivery({
+          session: authorized.session,
+          stepInput: { message: "yes", messageAuth: responder },
+          tools,
+        })
+      );
+      expect(responsePolicy).toHaveBeenCalledOnce();
+    }
+  );
 
   it("does not bind an unattributed text reply to a protected approval", async () => {
     const session: HarnessSession = {

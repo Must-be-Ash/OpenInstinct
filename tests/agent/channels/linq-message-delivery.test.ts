@@ -239,6 +239,58 @@ describe("Linq message delivery", () => {
     });
   });
 
+  it("converts terminal artifact markdown when the model omits send_message", async () => {
+    const artifactId = "0d01e667-d128-4bb7-a248-1ae21db72f4f";
+    linqChannelCapture.readImage.mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      filename: "surreal.png",
+      id: artifactId,
+      mediaType: "image/png",
+    });
+    const { context, post } = handlerContext();
+
+    await handleCompletedMessage(
+      {
+        finishReason: "stop",
+        message: `Here it is.\n\n![Surreal image](/artifacts/${artifactId})`,
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
+    );
+
+    expect(post).toHaveBeenCalledExactlyOnceWith({
+      files: [
+        {
+          data: Buffer.from([1, 2, 3]),
+          filename: "surreal.png",
+          mimeType: "image/png",
+        },
+      ],
+      raw: "Here it is.",
+    });
+  });
+
+  it("does not deliver partial text from an error-finished model response", async () => {
+    const { context, post } = handlerContext();
+
+    await handleCompletedMessage(
+      {
+        finishReason: "error",
+        message: "Approved. Fetching the report now.",
+        sequence: 0,
+        stepIndex: 0,
+        turnId: "turn-1",
+      },
+      context,
+      sessionContext()
+    );
+
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("does not post narration from a tool-calling step", async () => {
     const { context, post } = handlerContext();
 

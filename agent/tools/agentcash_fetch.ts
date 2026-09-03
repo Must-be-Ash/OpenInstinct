@@ -14,9 +14,9 @@ import { env } from "@/env";
 
 export default defineTool({
   description:
-    "Call one HTTPS API through Agentcash with automatic SIWX and x402/MPP payment. Requires a caller-visible per-request USD ceiling and explicit user approval. Call agentcash_check_endpoint_schema first for a new endpoint.",
+    "Call one HTTPS API through Agentcash with automatic SIWX and x402/MPP payment. Invoke this tool directly after showing the caller-visible request and USD ceiling; Eve automatically pauses it for the user's one native approval. Never ask for approval with ask_question or prose. Call agentcash_check_endpoint_schema first for a new endpoint.",
   inputSchema: agentcashFetchSchema,
-  approval: agentcashPaymentApprovalPolicy,
+  approval: agentcashPaymentApprovalPolicy(),
   async execute(input, ctx) {
     requireAgentcashAccess(ctx);
     const caller = ctx.session.auth.current ?? ctx.session.auth.initiator;

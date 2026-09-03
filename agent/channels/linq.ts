@@ -14,7 +14,7 @@ import { reactToMessageToolResultSchema } from "@/agent/lib/react-to-message";
 import { sendMessageToolResultSchema } from "@/agent/lib/send-message";
 import { normalizeAuthPhoneNumber } from "@/auth/phone-number";
 import { scopeFromPrincipal } from "@/agent/lib/principal-scope";
-import { accessScopeForUser } from "@/lib/access-scope";
+import { accessScopeForUser, type AccessScope } from "@/lib/access-scope";
 import { prepareLinqArtifactDelivery } from "../lib/linq-artifact-delivery";
 import { prepareLinqImageArtifactDelivery } from "../lib/linq-image-artifact/delivery";
 import {
@@ -134,86 +134,12 @@ export default linqChannel({
 
         const caller =
           session.session.auth.current ?? session.session.auth.initiator;
-        if (!caller) {
-          const references =
-            extractImageArtifactMarkdownReferences(requestedText);
-          const text =
-            references.length === 0
-              ? requestedText
-              : [
-                  stripImageArtifactMarkdownReferences(requestedText),
-                  "I couldn't attach the image.",
-                ]
-                  .filter(Boolean)
-                  .join("\n\n");
-          const outgoing: Extract<
-            Parameters<typeof thread.post>[0],
-            { raw: string }
-          > = { raw: text };
-          if (attachments?.length) outgoing.attachments = attachments;
-          await post(outgoing);
-          await finalizeScheduledReportDelivery(session);
-          return;
-        }
-
-        const scope = scopeFromPrincipal(caller);
-        const artifactDelivery = await prepareLinqArtifactDelivery(
-          requestedText,
-          { scope }
-        );
-        const imageDelivery = await prepareLinqImageArtifactDelivery(
-          artifactDelivery.markdown,
-          {
-            rootSessionId: report?.workerSessionId ?? session.session.id,
-            scope,
-          }
-        );
-        if (imageDelivery.failedArtifactIds.length > 0) {
-          console.warn("[linq] browser image delivery failed", {
-            artifactIds: imageDelivery.failedArtifactIds,
-            sessionId: session.session.id,
-          });
-        }
-        if (artifactDelivery.failedArtifactIds.length > 0) {
-          console.warn("[linq] artifact delivery failed", {
-            artifactIds: artifactDelivery.failedArtifactIds,
-            sessionId: session.session.id,
-          });
-        }
-        const failedImageCount = imageDelivery.failedArtifactIds.length;
-        const imageFailureMessage =
-          failedImageCount === 0
-            ? ""
-            : failedImageCount === 1
-              ? "I couldn't attach one image."
-              : `I couldn't attach ${String(failedImageCount)} images.`;
-        const failedArtifactCount = artifactDelivery.failedArtifactIds.length;
-        const artifactFailureMessage =
-          failedArtifactCount === 0
-            ? ""
-            : failedArtifactCount === 1
-              ? "I couldn't publish one artifact."
-              : `I couldn't publish ${String(failedArtifactCount)} artifacts.`;
-        const text = [
-          imageDelivery.text,
-          imageFailureMessage,
-          artifactFailureMessage,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        const outgoing: Extract<
-          Parameters<typeof thread.post>[0],
-          { raw: string }
-        > = { raw: text };
-        const outgoingAttachments = [
-          ...(attachments ?? []),
-          ...artifactDelivery.attachments,
-        ];
-        if (outgoingAttachments.length > 0) {
-          outgoing.attachments = outgoingAttachments;
-        }
-        if (imageDelivery.files.length > 0)
-          outgoing.files = imageDelivery.files;
+        const outgoing = await prepareLinqTextDelivery(requestedText, {
+          attachments,
+          rootSessionId: report?.workerSessionId ?? session.session.id,
+          scope: caller ? scopeFromPrincipal(caller) : undefined,
+          sessionId: session.session.id,
+        });
         await post(outgoing);
         await finalizeScheduledReportDelivery(session);
       }
@@ -226,7 +152,15 @@ export default linqChannel({
         return;
       }
       if (!event.message || !context.thread) return;
-      await context.thread.post({ raw: event.message });
+      if (event.finishReason === "error") return;
+      const caller =
+        session.session.auth.current ?? session.session.auth.initiator;
+      const outgoing = await prepareLinqTextDelivery(event.message, {
+        rootSessionId: session.session.id,
+        scope: caller ? scopeFromPrincipal(caller) : undefined,
+        sessionId: session.session.id,
+      });
+      await context.thread.post(outgoing);
     },
     async "input.requested"(event, context, session) {
       if (!context.thread || event.requests.length === 0) return;
@@ -339,6 +273,88 @@ export default linqChannel({
     };
   },
 });
+
+type LinqOutgoingMessage = Extract<AdapterPostableMessage, { raw: string }>;
+type LinqOutgoingAttachment = NonNullable<
+  LinqOutgoingMessage["attachments"]
+>[number];
+
+async function prepareLinqTextDelivery(
+  requestedText: string,
+  input: {
+    readonly attachments?: LinqOutgoingAttachment[];
+    readonly rootSessionId: string;
+    readonly scope?: AccessScope;
+    readonly sessionId: string;
+  }
+): Promise<LinqOutgoingMessage> {
+  if (!input.scope) {
+    const references = extractImageArtifactMarkdownReferences(requestedText);
+    const text =
+      references.length === 0
+        ? requestedText
+        : [
+            stripImageArtifactMarkdownReferences(requestedText),
+            "I couldn't attach the image.",
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+    const outgoing: LinqOutgoingMessage = { raw: text };
+    if (input.attachments?.length) outgoing.attachments = input.attachments;
+    return outgoing;
+  }
+
+  const artifactDelivery = await prepareLinqArtifactDelivery(requestedText, {
+    scope: input.scope,
+  });
+  const imageDelivery = await prepareLinqImageArtifactDelivery(
+    artifactDelivery.markdown,
+    {
+      rootSessionId: input.rootSessionId,
+      scope: input.scope,
+    }
+  );
+  if (imageDelivery.failedArtifactIds.length > 0) {
+    console.warn("[linq] browser image delivery failed", {
+      artifactIds: imageDelivery.failedArtifactIds,
+      sessionId: input.sessionId,
+    });
+  }
+  if (artifactDelivery.failedArtifactIds.length > 0) {
+    console.warn("[linq] artifact delivery failed", {
+      artifactIds: artifactDelivery.failedArtifactIds,
+      sessionId: input.sessionId,
+    });
+  }
+  const failedImageCount = imageDelivery.failedArtifactIds.length;
+  const imageFailureMessage =
+    failedImageCount === 0
+      ? ""
+      : failedImageCount === 1
+        ? "I couldn't attach one image."
+        : `I couldn't attach ${String(failedImageCount)} images.`;
+  const failedArtifactCount = artifactDelivery.failedArtifactIds.length;
+  const artifactFailureMessage =
+    failedArtifactCount === 0
+      ? ""
+      : failedArtifactCount === 1
+        ? "I couldn't publish one artifact."
+        : `I couldn't publish ${String(failedArtifactCount)} artifacts.`;
+  const outgoing: LinqOutgoingMessage = {
+    raw: [imageDelivery.text, imageFailureMessage, artifactFailureMessage]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
+  const outgoingAttachments = [
+    ...(input.attachments ?? []),
+    ...artifactDelivery.attachments,
+  ];
+  if (outgoingAttachments.length > 0) {
+    outgoing.attachments = outgoingAttachments;
+  }
+  if (imageDelivery.files.length > 0) outgoing.files = imageDelivery.files;
+  return outgoing;
+}
 
 const sensitiveApprovalInputKey =
   /(?:api.?key|authorization|body|cookie|credential|mnemonic|password|preview.?token|private.?key|secret|signature|signed.?payload|token)$/iu;
